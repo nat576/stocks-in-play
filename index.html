@@ -1,0 +1,214 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>In Play</title>
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-title" content="In Play">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<meta name="theme-color" content="#0d0e10">
+<link rel="apple-touch-icon" href="icon.png">
+<link rel="icon" href="icon.png">
+<link rel="manifest" href="manifest.json">
+<style>
+  :root {
+    --bg: #0d0e10;
+    --card: #16181b;
+    --line: #24272c;
+    --text: #eceef1;
+    --muted: #8a9099;
+    --faint: #5b616a;
+    --up: #34d399;
+    --down: #f87171;
+    --hot: #fbbf24;
+    --chip: #1f2226;
+  }
+  @media (prefers-color-scheme: light) {
+    :root {
+      --bg: #f3f4f6; --card: #ffffff; --line: #e3e5e9; --text: #111316;
+      --muted: #5f6670; --faint: #9aa0a8; --up: #059669; --down: #dc2626;
+      --hot: #b45309; --chip: #f0f1f3;
+    }
+  }
+  * { box-sizing: border-box; }
+  html, body { margin: 0; background: var(--bg); color: var(--text); }
+  body {
+    font: 15px/1.35 -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+    padding: calc(env(safe-area-inset-top) + 14px) 16px calc(env(safe-area-inset-bottom) + 24px);
+    max-width: 560px; margin: 0 auto;
+    -webkit-font-smoothing: antialiased;
+  }
+  .num { font-variant-numeric: tabular-nums; }
+
+  header { display: flex; align-items: flex-end; justify-content: space-between; margin-bottom: 14px; }
+  h1 { font-size: 26px; letter-spacing: -0.02em; margin: 0; font-weight: 750; }
+  .sub { color: var(--muted); font-size: 13px; margin-top: 2px; }
+  button.refresh {
+    border: 1px solid var(--line); background: var(--card); color: var(--text);
+    width: 40px; height: 40px; border-radius: 12px; font-size: 18px; cursor: pointer;
+  }
+  button.refresh.spin span { display: inline-block; animation: spin .8s linear infinite; }
+  @keyframes spin { to { transform: rotate(360deg); } }
+
+  .banner {
+    border-radius: 12px; padding: 10px 12px; margin-bottom: 12px; font-size: 13.5px;
+    background: var(--chip); color: var(--muted); border: 1px solid var(--line);
+  }
+  .banner.warn { color: var(--hot); border-color: color-mix(in srgb, var(--hot) 40%, transparent); }
+
+  .card {
+    background: var(--card); border: 1px solid var(--line); border-radius: 16px;
+    padding: 12px 14px; margin-bottom: 10px;
+  }
+  .top { display: flex; align-items: center; gap: 12px; }
+  .rank { color: var(--faint); font-size: 13px; width: 16px; text-align: right; flex: none; }
+  .candle { flex: none; }
+  .id { flex: 1; min-width: 0; }
+  .sym { font-size: 20px; font-weight: 700; letter-spacing: 0.01em; color: var(--text); text-decoration: none; }
+  .exch { color: var(--faint); font-size: 11px; margin-left: 4px; letter-spacing: .04em; }
+  .px { text-align: right; flex: none; }
+  .price { font-size: 17px; font-weight: 600; }
+  .gap { font-size: 13.5px; font-weight: 600; }
+  .up { color: var(--up); } .down { color: var(--down); }
+
+  .stats { display: grid; grid-template-columns: repeat(3, 1fr); gap: 6px; margin-top: 10px; }
+  .stat { background: var(--chip); border-radius: 10px; padding: 6px 8px; }
+  .stat b { display: block; font-size: 15px; font-weight: 650; }
+  .stat small { color: var(--muted); font-size: 11px; text-transform: uppercase; letter-spacing: .05em; }
+  .stat.rvol b { color: var(--hot); }
+
+  .or { display: flex; justify-content: space-between; margin-top: 8px; font-size: 13.5px; color: var(--muted); }
+  .or strong { color: var(--text); font-weight: 600; }
+
+  .news { margin-top: 9px; padding-top: 9px; border-top: 1px solid var(--line); font-size: 13.5px; }
+  .news .meta { color: var(--faint); font-size: 11.5px; margin-top: 2px; }
+  .news.none { color: var(--faint); font-style: italic; }
+
+  footer { color: var(--faint); font-size: 12px; margin-top: 18px; line-height: 1.5; }
+  .empty { text-align: center; color: var(--muted); padding: 50px 10px; }
+</style>
+</head>
+<body>
+<header>
+  <div>
+    <h1>Stocks in Play</h1>
+    <div class="sub num" id="sub">Loading…</div>
+  </div>
+  <button class="refresh" id="refresh" aria-label="Refresh"><span>↻</span></button>
+</header>
+<div id="banner"></div>
+<main id="list"></main>
+<footer>
+  Ranked by relative volume of the first 5 minutes vs. the 14-day average.
+  Filters: price ≥ $5, avg volume ≥ 1M, ATR ≥ $0.50. Candle = first 5-minute bar.
+  Tap a ticker to open its chart.
+</footer>
+
+<script>
+const $ = (id) => document.getElementById(id);
+const esc = (s) => String(s ?? "").replace(/[&<>"']/g, c => ({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[c]));
+const fmt = (n, d = 2) => n == null ? "–" : Number(n).toLocaleString("en-US", {minimumFractionDigits: d, maximumFractionDigits: d});
+
+function nyNow() {
+  const p = Object.fromEntries(new Intl.DateTimeFormat("en-US", {
+    timeZone: "America/New_York", year: "numeric", month: "2-digit", day: "2-digit",
+    hour: "2-digit", minute: "2-digit", weekday: "short", hour12: false
+  }).formatToParts(new Date()).map(x => [x.type, x.value]));
+  return { date: `${p.year}-${p.month}-${p.day}`, mins: (+p.hour % 24) * 60 + +p.minute, weekday: p.weekday };
+}
+
+function prettyDate(iso) {
+  const [y, m, d] = iso.split("-").map(Number);
+  return new Date(y, m - 1, d).toLocaleDateString("en-US", {weekday: "short", month: "short", day: "numeric"});
+}
+
+function candleSvg(s) {
+  const W = 14, H = 40, pad = 2;
+  const hi = s.or_high, lo = s.or_low, op = s.or_open ?? (s.first_candle === "up" ? lo : hi), cl = s.price;
+  const span = (hi - lo) || 1;
+  const y = (v) => pad + (hi - v) / span * (H - 2 * pad);
+  const cls = cl > op ? "up" : cl < op ? "down" : "";
+  const top = Math.min(y(op), y(cl)), bh = Math.max(Math.abs(y(op) - y(cl)), 1.5);
+  return `<svg class="candle ${cls}" width="${W}" height="${H}" viewBox="0 0 ${W} ${H}" aria-label="first 5-minute candle ${s.first_candle}">
+    <line x1="${W/2}" x2="${W/2}" y1="${y(hi)}" y2="${y(lo)}" stroke="currentColor" stroke-width="1.5"/>
+    <rect x="2" width="${W-4}" y="${top}" height="${bh}" rx="1.5" fill="currentColor"/>
+  </svg>`;
+}
+
+function newsTime(iso) {
+  if (!iso) return "";
+  const t = new Date(iso);
+  return t.toLocaleString("en-US", {timeZone: "America/New_York", weekday: "short", hour: "numeric", minute: "2-digit"}) + " ET";
+}
+
+function card(s) {
+  const dir = s.gap_pct >= 0 ? "up" : "down";
+  const sign = s.gap_pct >= 0 ? "+" : "";
+  const news = s.headline
+    ? `<div class="news">${esc(s.headline)}<div class="meta">${esc(s.headline_source || "")} · ${esc(newsTime(s.headline_time))}</div></div>`
+    : `<div class="news none">No recent headline</div>`;
+  const chart = `https://www.tradingview.com/chart/?symbol=${encodeURIComponent(s.symbol)}`;
+  return `<article class="card">
+    <div class="top">
+      <div class="rank num">${s.rank}</div>
+      ${candleSvg(s)}
+      <div class="id"><a class="sym" href="${chart}" target="_blank" rel="noopener">${esc(s.symbol)}</a><span class="exch">${esc(s.exchange || "")}</span></div>
+      <div class="px num"><div class="price">$${fmt(s.price)}</div><div class="gap ${dir}">${sign}${fmt(s.gap_pct, 1)}% gap</div></div>
+    </div>
+    <div class="stats num">
+      <div class="stat rvol"><small>Rel vol</small><b>${fmt(s.rvol, 1)}×</b></div>
+      <div class="stat"><small>ATR</small><b>$${fmt(s.atr)}</b></div>
+      <div class="stat"><small>OR / ATR</small><b>${s.or_width_atr == null ? "–" : fmt(s.or_width_atr)}</b></div>
+    </div>
+    <div class="or num"><span>OR high <strong>${fmt(s.or_high)}</strong></span><span>OR low <strong>${fmt(s.or_low)}</strong></span></div>
+    ${news}
+  </article>`;
+}
+
+function status(data) {
+  const now = nyNow();
+  const weekend = now.weekday === "Sat" || now.weekday === "Sun";
+  if (data.sample) return ["warn", "Sample data — your real list will replace this once the PC scanner runs."];
+  if (data.test) return ["warn", `Test run using ${prettyDate(data.date)}'s session.`];
+  if (data.date === now.date) return null;
+  if (weekend) return ["", `Markets closed — showing ${prettyDate(data.date)}'s list.`];
+  if (now.mins < 9 * 60 + 36) return ["", `Today's list arrives around 9:36 ET. Showing ${prettyDate(data.date)}.`];
+  if (now.mins < 9 * 60 + 45) return ["", "Today's list should land any moment — tap ↻."];
+  return ["warn", `No list for today yet (showing ${prettyDate(data.date)}). Market holiday, or check the PC scanner.`];
+}
+
+async function load() {
+  const btn = $("refresh");
+  btn.classList.add("spin");
+  try {
+    const r = await fetch(`data.json?t=${Date.now()}`, {cache: "no-store"});
+    if (!r.ok) throw new Error(r.status);
+    const data = await r.json();
+    const gen = new Date(data.generated_at).toLocaleTimeString("en-US", {timeZone: "America/New_York", hour: "numeric", minute: "2-digit"});
+    $("sub").textContent = `${prettyDate(data.date)} · updated ${gen} ET`;
+    const st = status(data);
+    $("banner").innerHTML = st ? `<div class="banner ${st[0]}">${esc(st[1])}</div>` : "";
+    $("list").innerHTML = data.stocks?.length
+      ? data.stocks.map(card).join("")
+      : `<div class="empty">No stocks passed the filters this session.</div>`;
+  } catch (e) {
+    $("sub").textContent = "Couldn't load the list";
+    $("banner").innerHTML = `<div class="banner warn">Couldn't reach the data file. Check your connection and tap ↻.</div>`;
+  } finally {
+    btn.classList.remove("spin");
+  }
+}
+
+$("refresh").addEventListener("click", load);
+document.addEventListener("visibilitychange", () => { if (!document.hidden) load(); });
+// Around the open, check every 30 s for the fresh list
+setInterval(() => {
+  const n = nyNow();
+  if (!document.hidden && n.mins >= 9 * 60 + 35 && n.mins <= 9 * 60 + 50) load();
+}, 30000);
+load();
+</script>
+</body>
+</html>
