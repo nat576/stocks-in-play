@@ -73,11 +73,29 @@
   .gap { font-size: 13.5px; font-weight: 600; }
   .up { color: var(--up); } .down { color: var(--down); }
 
-  .stats { display: grid; grid-template-columns: repeat(3, 1fr); gap: 6px; margin-top: 10px; }
-  .stat { background: var(--chip); border-radius: 10px; padding: 6px 8px; }
+  .stats { display: grid; grid-template-columns: repeat(4, 1fr); gap: 6px; margin-top: 10px; }
+  .stat { background: var(--chip); border-radius: 10px; padding: 6px 8px; min-width: 0; }
   .stat b { display: block; font-size: 15px; font-weight: 650; }
-  .stat small { color: var(--muted); font-size: 11px; text-transform: uppercase; letter-spacing: .05em; }
+  .stat small { color: var(--muted); font-size: 10.5px; text-transform: uppercase; letter-spacing: .04em; white-space: nowrap; }
   .stat.rvol b { color: var(--hot); }
+  .stat.wide b { color: var(--down); }
+
+  .mkt { display: flex; gap: 8px; margin-bottom: 12px; }
+  .mchip {
+    flex: 1; display: flex; align-items: baseline; justify-content: space-between; gap: 6px;
+    background: var(--card); border: 1px solid var(--line); border-radius: 12px; padding: 8px 10px;
+    white-space: nowrap; min-width: 0;
+  }
+  .mchip .msym { font-weight: 700; font-size: 14px; }
+  .mchip .mchg { font-weight: 650; font-size: 14px; }
+  .mchip small { color: var(--faint); font-size: 11px; }
+
+  .tag {
+    display: inline-block; font-size: 11px; font-weight: 650; letter-spacing: .03em;
+    padding: 2px 7px; border-radius: 6px; margin-right: 6px; vertical-align: 1px;
+    background: var(--chip); color: var(--text); border: 1px solid var(--line);
+  }
+  .tag.halt { color: var(--hot); border-color: color-mix(in srgb, var(--hot) 45%, transparent); }
 
   .or { display: flex; justify-content: space-between; margin-top: 8px; font-size: 13.5px; color: var(--muted); }
   .or strong { color: var(--text); font-weight: 600; }
@@ -106,11 +124,14 @@
   <button class="refresh" id="refresh" aria-label="Refresh"><span>↻</span></button>
 </header>
 <div id="banner"></div>
+<div id="market"></div>
 <main id="list"></main>
 <div id="export"></div>
 <footer>
   Ranked by relative volume of the first 5 minutes vs. the 14-day average.
-  Filters: price ≥ $5, avg volume ≥ 1M, ATR ≥ $0.50. Candle = first 5-minute bar.
+  Filters: price ≥ $5, median volume ≥ 1M, ≥ 100k shares in the first 5 minutes,
+  spread ≤ 0.5%, ATR ≥ $0.50. Candle = first 5-minute bar. Spread = bid-ask at ~9:36,
+  shown in red above 0.25%. Catalyst tags are read from recent headlines.
   Tap a ticker to open its chart.
 </footer>
 
@@ -151,12 +172,17 @@ function newsTime(iso) {
   return t.toLocaleString("en-US", {timeZone: "America/New_York", weekday: "short", hour: "numeric", minute: "2-digit"}) + " ET";
 }
 
+const SPREAD_WARN = 0.25;   // % — spreads above this show in red
+
 function card(s) {
   const dir = s.gap_pct >= 0 ? "up" : "down";
   const sign = s.gap_pct >= 0 ? "+" : "";
+  const tags = (s.catalyst ? `<span class="tag">${esc(s.catalyst)}</span>` : "")
+             + (s.halted ? `<span class="tag halt">Halted today</span>` : "");
   const news = s.headline
-    ? `<div class="news">${esc(s.headline)}<div class="meta">${esc(s.headline_source || "")} · ${esc(newsTime(s.headline_time))}</div></div>`
-    : `<div class="news none">No recent headline</div>`;
+    ? `<div class="news">${tags}${esc(s.headline)}<div class="meta">${esc(s.headline_source || "")} · ${esc(newsTime(s.headline_time))}</div></div>`
+    : `<div class="news none">${tags}No recent headline</div>`;
+  const wide = s.spread_pct != null && s.spread_pct > SPREAD_WARN;
   const chart = `https://www.tradingview.com/chart/?symbol=${encodeURIComponent(s.tv_symbol || s.symbol)}`;
   return `<article class="card">
     <div class="top">
@@ -169,6 +195,7 @@ function card(s) {
       <div class="stat rvol"><small>Rel vol</small><b>${fmt(s.rvol, 1)}×</b></div>
       <div class="stat"><small>ATR</small><b>$${fmt(s.atr)}</b></div>
       <div class="stat"><small>OR / ATR</small><b>${s.or_width_atr == null ? "–" : fmt(s.or_width_atr)}</b></div>
+      <div class="stat${wide ? " wide" : ""}"><small>Spread</small><b>${s.spread_pct == null ? "–" : fmt(s.spread_pct) + "%"}</b></div>
     </div>
     <div class="or num"><span>OR high <strong>${fmt(s.or_high)}</strong></span><span>OR low <strong>${fmt(s.or_low)}</strong></span></div>
     ${news}
@@ -185,6 +212,18 @@ function status(data) {
   if (now.mins < 9 * 60 + 36) return ["", `Today's list arrives around 9:36 ET. Showing ${prettyDate(data.date)}.`];
   if (now.mins < 9 * 60 + 45) return ["", "Today's list should land any moment — tap ↻."];
   return ["warn", `No list for today yet (showing ${prettyDate(data.date)}). Market holiday, or check the PC scanner.`];
+}
+
+// SPY / QQQ first 5-minute bar: change from prior close, and candle colour
+function marketStrip(data) {
+  if (!data.market?.length) return "";
+  return `<div class="mkt num">${data.market.map(m => {
+    const cls = m.chg_pct > 0 ? "up" : m.chg_pct < 0 ? "down" : "";
+    const candle = {up: "green 5m", down: "red 5m"}[m.first_candle] || "flat 5m";
+    return `<div class="mchip"><span class="msym">${esc(m.symbol)}</span>
+      <span class="mchg ${cls}">${m.chg_pct > 0 ? "+" : ""}${fmt(m.chg_pct)}%</span>
+      <small class="${m.first_candle === "up" ? "up" : m.first_candle === "down" ? "down" : ""}">${candle}</small></div>`;
+  }).join("")}</div>`;
 }
 
 // TradingView import file: exchange-prefixed tickers, comma-separated, as .txt
@@ -208,6 +247,7 @@ async function load() {
     $("sub").textContent = `${prettyDate(data.date)} · updated ${gen} ET`;
     const st = status(data);
     $("banner").innerHTML = st ? `<div class="banner ${st[0]}">${esc(st[1])}</div>` : "";
+    $("market").innerHTML = marketStrip(data);
     $("list").innerHTML = data.stocks?.length
       ? data.stocks.map(card).join("")
       : `<div class="empty">No stocks passed the filters this session.</div>`;
